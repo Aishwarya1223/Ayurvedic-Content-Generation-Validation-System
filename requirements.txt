@@ -1,0 +1,15 @@
+ipykernel
+python-dotenv
+sentence-transformers
+langchain
+langchain-community
+langchain-openai
+langchain-chroma
+chromadb
+faiss-cpu
+bs4
+pytest
+langgraph
+rank-bm25
+
+

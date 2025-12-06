@@ -1,0 +1,70 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+*.pkl
+
+# Virtual environments
+venv/
+.env/
+env/
+.venv/
+
+# Byte-compiled
+*.pyc
+
+# Environment & Secrets
+.env
+*.env
+credentials.json
+
+
+# Logs, Cache, Artifacts
+*.log
+logs/
+*.tmp
+
+# HuggingFace cache
+~/.cache/huggingface/
+huggingface/
+hf_cache/
+
+# LangChain cache
+lc_cache/
+langchain_cache/
+
+
+# Chroma DB persistence
+chroma_db/
+chroma/
+vectorstore/
+index/
+*.sqlite
+*.db
+
+# Jupyter / Notebooks
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+*.whl
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# Local testing
+tests/__pycache__/
+
+agent_graph/
