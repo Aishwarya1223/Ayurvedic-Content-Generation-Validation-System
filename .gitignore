@@ -70,3 +70,4 @@ tests/__pycache__/
 agent_graph/
 tests/
 eval_out/
+notebooks/
