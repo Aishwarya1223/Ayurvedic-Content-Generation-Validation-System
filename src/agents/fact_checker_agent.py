@@ -58,9 +58,9 @@ class FactCheckerAgent:
         agent = initialize_agent(
             tools=tools,
             llm=self.llm,
-            agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
+            agent=AgentType.OPENAI_FUNCTIONS,
             verbose=self.verbose,
-            max_iterations=10,
+            max_iterations=30,
             handle_parsing_errors=True,
         )
         return agent

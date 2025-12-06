@@ -6,53 +6,11 @@ from langchain_openai import ChatOpenAI
 from langchain_classic.chains.llm import LLMChain
 from langchain_classic.prompts import PromptTemplate
 from src.utils.logger import setup_logger
+from src.utils.prompts import PROMPT_FOR_TONE_EDITOR
 from src.utils.config import settings
 logger = logging.getLogger(__name__)
 if not logger.handlers:
     setup_logger()
-
-TONE_PROMPT_TEMPLATE = (
-    "You are a Kerala Ayurveda editor. Use ONLY the DRAFT provided below.\n"
-    "Do not add new factual claims. Focus on applying the Kerala Ayurveda brand tone: warm, respectful, and non-prescriptive.\n\n"
-    "DRAFT:\n{draft}\n\n"
-    "INSTRUCTIONS (must follow exactly):\n"
-    "1) Return STRICT JSON and NOTHING ELSE. The JSON object must have two keys:\n"
-    '   "edited" -> (string) the edited draft in Markdown.\n'
-    '   "notes"  -> (object) a short metadata object, e.g. {{"added_safety_note": true, "edits_summary":"..."}}\n'
-    "2) If you cannot produce valid JSON, return EXACTLY this JSON (no extra text):\n"
-    '{{"edited":"", "notes":{{"added_safety_note":false,"edits_summary":"invalid_json"}}}}\n'
-    "3) Keep the edited draft concise but complete. Do not include any explanation or extra commentary.\n"
-)
-
-TONE_EDIT_PROMPT = PromptTemplate(
-    input_variables=["draft"],
-    template=TONE_PROMPT_TEMPLATE
-)
-PROMPT_FOR_TONE_EDITOR = (
-    "You are a Kerala Ayurveda tone editor. Use ONLY the DRAFT provided below.\n"
-    "Do not add new factual claims. Apply the Kerala Ayurveda brand tone: warm, respectful, precise, and non-prescriptive.\n\n"
-    "DRAFT TO EDIT:\n{draft}\n\n"
-    "TONE REQUIREMENTS (do not deviate):\n"
-    "- Warm, reassuring, respectful, and precise.\n"
-    "- Non-medical and non-prescriptive (no dosages, no guarantees).\n"
-    "- No exaggeration or absolute claims.\n"
-    "- Introduce Sanskrit terms gently when used.\n"
-    "- Keep paragraphs short; use simple headings when helpful.\n\n"
-    "SAFETY RULES:\n"
-    "- Preserve factual meaning; do NOT invent claims, benefits, or dosage.\n"
-    "- Preserve all citations exactly (e.g., [doc#section]).\n"
-    "- If a gentle safety note is missing, add this footer exactly once at the end:\n"
-    '  "Individuals with medical conditions, pregnancy, or ongoing medication should consult a qualified healthcare provider before starting any new supplement or therapy."\n\n'
-    "INSTRUCTIONS (MUST FOLLOW EXACTLY):\n"
-    "1) Return STRICT JSON ONLY and NOTHING ELSE. The JSON object MUST have exactly two keys:\n"
-    '   \"edited\" -> (string) the edited draft in Markdown.\n'
-    '   \"notes\"  -> (object) metadata, e.g. {{\"added_safety_note\": true/false, \"edits_summary\": \"one-sentence summary\"}}\n'
-    "2) If you cannot produce valid JSON, return EXACTLY this JSON (no extra text):\n"
-    '{{"edited":"", "notes":{{"added_safety_note":false,"edits_summary":"invalid_json"}}}}\n'
-    "3) Keep the edited draft concise but complete. Do not include any explanation or commentary outside the JSON.\n"
-    "4) Try to preserve sentence-level citations; do not remove or alter [S#] tags.\n"
-    "5) Use temperature 0.0 when calling the LLM for this task.\n"
-)
 
 TONE_EDIT_PROMPT = PromptTemplate(input_variables=["draft"], template=PROMPT_FOR_TONE_EDITOR)
 

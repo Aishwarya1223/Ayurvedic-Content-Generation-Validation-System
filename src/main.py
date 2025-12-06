@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 
 
 def safe_load(obj):
-    """If obj is a JSON string, parse it; otherwise return obj."""
+    if isinstance(obj, dict): return obj
     if isinstance(obj, str):
         try:
             return json.loads(obj)
@@ -27,8 +27,8 @@ def safe_load(obj):
             try:
                 return json.loads(obj.replace("'", '"'))
             except Exception:
-                return obj
-    return obj
+                return {"raw": obj}
+    return {"raw": str(obj)}
 
 
 def extract_text_field(maybe):
@@ -68,7 +68,6 @@ def norm_to_str(out, fallback=""):
             v = o.get(k)
             if isinstance(v, str) and v.strip():
                 return v
-        # if dict but no text keys, return JSON dump
         return json.dumps(o, ensure_ascii=False)
     return str(o) if o is not None else fallback
 
@@ -87,18 +86,20 @@ def main():
 
     bm25 = BM25Okapi(tokenized_docs) if tokenized_docs else None
     brief = "Write a short accessible article about Triphala and digestion support."
-
+    sources_block = ""
+    for i, txt in enumerate(raw_texts[:3], start=1):
+        sources_block += f"[S{i}] DOC:doc{i} SECTION:sec1\n{txt[:1500]}\n\n"
     # 1) Outline
     outline_agent = OutlineAgent()
-    outline_resp = safe_load(outline_agent.run(brief))
-    outline_text = (outline_resp or {}).get("outline") if isinstance(outline_resp, dict) else str(outline_resp or "")
+    outline_resp = outline_agent.tool.func(json.dumps({"brief": brief, "sources": sources_block}, ensure_ascii=False))
+    outline_resp = safe_load(outline_resp) or {}
+    outline_text = outline_resp.get("outline", "")
     log.info("Outline produced (first 200 chars): %s", (outline_text or "")[:200])
 
-    # 2) Writer — pass outline + small slice of raw_texts as context
     writer_agent = WriterAgent()
     outline_text = outline_resp.get("outline") if isinstance(outline_resp, dict) else str(outline_resp)
-
-    writer_out = safe_load(writer_agent.run(brief=brief, context=outline_text))
+    context = sources_block
+    writer_out = safe_load(writer_agent.run(brief=brief, context=context))
     draft = (writer_out.get("draft") or writer_out.get("text")) if isinstance(writer_out, dict) else str(writer_out or "")
     log.info("Draft length: %d", len(draft or ""))
 
@@ -106,7 +107,6 @@ def main():
     fc_agent = FactCheckerAgent()
     fc_resp = fc_agent.run(draft_text=draft, vectordb=vectordb, embed=embed, bm25=bm25, tokenized_docs=tokenized_docs)
 
-    # grounding extraction (defensive)
     grounding = None
     if isinstance(fc_resp, dict):
         grounding = (
@@ -121,10 +121,18 @@ def main():
     # 4) Tone edit
     tone_agent = ToneEditor()
     tone_out = tone_agent.run(draft_for_tone)
-
-    # normalize tone_out if it's a wrapped JSON-in-text
+    
     tone_out = safe_load(tone_out)
-    final = norm_to_str(tone_out, fallback=draft_for_tone)
+    if isinstance(tone_out, dict):
+        final = (
+            tone_out.get("edited")
+            or tone_out.get("draft")
+            or tone_out.get("text")
+            or draft_for_tone
+        )
+    else:
+        final = str(tone_out) or draft_for_tone
+
     tone_notes = (tone_out.get("notes") if isinstance(tone_out, dict) else {}) or {}
 
     result = {

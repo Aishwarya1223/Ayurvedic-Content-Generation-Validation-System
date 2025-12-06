@@ -24,10 +24,11 @@ except LookupError:
     nltk.download("punkt")
 
 
-CITATION_TAG_RE = re.compile(r"\[([^\[\]#]+#[^\[\]]+)\]")
+CITATION_TAG_RE = re.compile(r"\[([^\[\]]+)\]")
 
 def _extract_citation_tags(text: str) -> List[str]:
-    return CITATION_TAG_RE.findall(text)
+    return [m.group(1) for m in CITATION_TAG_RE.finditer(text)]
+
 
 def _lexical_overlap_score(a: str, b: str) -> float:
     toks_a = [t.lower() for t in word_tokenize(a) if t.isalnum()]
@@ -133,79 +134,113 @@ def fact_check_tool_factory(vectordb, embed, bm25=None, tokenized_docs=None):
         func=_tool,
     )
 
-def format_report_tool_factory(llm, name="format_report"):
-    tone_fragment = getattr(prompts, "TONE_EDITOR_PROMPT", "")
-    tone_fragment_escaped = tone_fragment.replace("{", "{{").replace("}", "}}")
+def format_report_tool_factory(llm, name: str = "format_report"):
+    """
+    Returns a langchain Tool that takes either:
+      - a JSON string containing {"draft": "...", "fact_check": {...}}
+      - or a plain draft string
+    and returns a strict JSON string:
+      {"summary": "...", "grounding_score": float, "unsupported_sentences": [...], "suggested_draft": "..."}
+    """
 
     prompt = PromptTemplate(
-    input_variables=["draft", "fact_check_json"],
-    template=(
-        "You are a Kerala Ayurveda editor. You must strictly use ONLY the information in FACT_CHECK_JSON.\n"
-        "If any part of the draft is unsupported, fix or soften it.\n"
-        f"{prompts.TONE_EDITOR_PROMPT.replace('{','{{').replace('}','}}')}\n\n"
-        "FACT_CHECK_JSON:\n{fact_check_json}\n\n"
-        "DRAFT:\n{draft}\n\n"
-        "IMPORTANT: Return ONLY a single JSON object and nothing else. No explanation, no code fences, no markdown.\n"
-        "The object MUST have these keys:\n"
-        "- summary (string)\n"
-        "- grounding_score (number between 0.0 and 1.0)\n"
-        "- unsupported_sentences (array of objects: {{\"idx\":<int>,\"sentence\":\"...\",\"reason\":\"...\"}})\n"
-        "- suggested_draft (string)\n\n"
-        "If you cannot produce valid JSON, return exactly this JSON (no extra text):\n"
-        '{{"summary":"invalid","grounding_score":0.0,"unsupported_sentences":[],"suggested_draft":""}}'
+        input_variables=["draft", "fact_check_json"],
+        template=(
+            "You are a fact-checking assistant for Kerala Ayurveda.\n"
+            "Your job is to check the DRAFT against FACT_CHECK_JSON (retrieved evidence).\n\n"
+            "RULES:\n"
+            "- Do NOT add new claims.\n"
+            "- Do NOT apply tone editing.\n"
+            "- Only check factual support.\n"
+            "- Suggested draft must keep meaning but remove/soften unsupported claims.\n\n"
+            "FACT_CHECK_JSON:\n{fact_check_json}\n\n"
+            "DRAFT TO CHECK:\n{draft}\n\n"
+            "Return ONLY this JSON object (no markdown, no explanation):\n"
+            "{{\n"
+            "  \"summary\": \"...\",\n"
+            "  \"grounding_score\": 0.0,\n"
+            "  \"unsupported_sentences\": [\n"
+            "      {{\"idx\": 0, \"sentence\": \"...\", \"reason\": \"...\"}}\n"
+            "  ],\n"
+            "  \"suggested_draft\": \"...\"\n"
+            "}}\n\n"
+            "If invalid JSON, return exactly:\n"
+            "{{\"summary\":\"invalid\",\"grounding_score\":0.0,\"unsupported_sentences\":[],\"suggested_draft\":\"\"}}"
         )
     )
 
-
     chain = LLMChain(llm=llm, prompt=prompt)
 
-    def _tool(input_str: str) -> str:
-        """
-        Always return a JSON *string*. This function is defensive:
-        - logs raw LLM output
-        - attempts to parse JSON
-        - falls back to extracting first {...} block
-        - final fallback returns the explicit invalid JSON string
-        """
-        try:
-            payload = json.loads(input_str)
-        except Exception:
+    def _sanitize_unsupported_list(items: Any):
+        if not isinstance(items, list):
+            return []
+        sanitized = []
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            idx = it.get("idx")
             try:
-                payload = {"draft": input_str}
+                idx = int(idx) if idx is not None else None
+            except Exception:
+                idx = None
+            sentence = it.get("sentence", "")
+            reason = it.get("reason", "")
+            sanitized.append({
+                "idx": idx if idx is not None else 0,
+                "sentence": sentence if isinstance(sentence, str) else str(sentence),
+                "reason": reason if isinstance(reason, str) else str(reason)
+            })
+        return sanitized
+
+    def _tool(input_str: str) -> str:
+        payload = None
+        if not input_str:
+            payload = {"draft": ""}
+        else:
+            try:
+                payload = json.loads(input_str)
+                if not isinstance(payload, dict):
+                    payload = {"draft": str(input_str)}
             except Exception:
                 payload = {"draft": input_str}
 
-        draft = payload.get("draft", "")
-        fc_json = json.dumps(payload.get("fact_check", {}), ensure_ascii=False)
+        draft = payload.get("draft", "") or ""
+        fact_check_obj = payload.get("fact_check", payload.get("fact_check_json", {}))
+        try:
+            fc_json = json.dumps(fact_check_obj, ensure_ascii=False)
+        except Exception:
+            fc_json = json.dumps({}, ensure_ascii=False)
 
-        out = None
         try:
             out = chain.run({"draft": draft, "fact_check_json": fc_json})
         except Exception as e:
             logger.exception("format_report_tool: chain.run failed: %s", e)
-            return json.dumps({
+            fallback = {
                 "summary": "chain_run_failed",
                 "grounding_score": 0.0,
                 "unsupported_sentences": [],
                 "suggested_draft": draft
-            }, ensure_ascii=False)
-        logger.error("format_report_tool RAW LLM OUTPUT: %r", out)
+            }
+            return json.dumps(fallback, ensure_ascii=False)
+
+        logger.debug("format_report_tool RAW LLM OUTPUT: %r", out)
+
+        out_text = (out or "").strip()
+        # remove ```json ... ``` or ``` ... ```
+        out_text = re.sub(r"```(?:json)?\s*", "", out_text)
+        out_text = re.sub(r"\s*```$", "", out_text)
 
         parsed = None
-        if isinstance(out, dict):
-            parsed = out
-        else:
-            out_text = (out or "").strip()
-            try:
-                parsed = json.loads(out_text)
-            except Exception:
-                import re
-                m = re.search(r"\{[\s\S]*\}", out_text)
-                if m:
-                    try:
-                        parsed = json.loads(m.group(0))
-                    except Exception:
-                        parsed = None
+        try:
+            parsed = json.loads(out_text)
+        except Exception:
+            m = re.search(r"\{[\s\S]*\}", out_text)
+            if m:
+                candidate = m.group(0)
+                try:
+                    parsed = json.loads(candidate)
+                except Exception:
+                    parsed = None
 
         if isinstance(parsed, dict):
             summary = parsed.get("summary", "")
@@ -213,25 +248,40 @@ def format_report_tool_factory(llm, name="format_report"):
             unsupported_sentences = parsed.get("unsupported_sentences", [])
             suggested_draft = parsed.get("suggested_draft", draft)
 
+            if not isinstance(summary, str):
+                summary = str(summary)
+            try:
+                grounding_score = float(grounding_score)
+                grounding_score = max(0.0, min(1.0, grounding_score))
+            except Exception:
+                grounding_score = 0.0
+
+            sanitized_unsupported = _sanitize_unsupported_list(unsupported_sentences)
+            if not isinstance(suggested_draft, str):
+                suggested_draft = str(suggested_draft)
+
             safe_result = {
-                "summary": summary if isinstance(summary, str) else str(summary),
-                "grounding_score": float(grounding_score) if (isinstance(grounding_score, (int, float)) and grounding_score >= 0.0) else 0.0,
-                "unsupported_sentences": unsupported_sentences if isinstance(unsupported_sentences, list) else [],
-                "suggested_draft": suggested_draft if isinstance(suggested_draft, str) else str(suggested_draft)
+                "summary": summary,
+                "grounding_score": grounding_score,
+                "unsupported_sentences": sanitized_unsupported,
+                "suggested_draft": suggested_draft
             }
             return json.dumps(safe_result, ensure_ascii=False)
-
+        logger.warning("format_report_tool: LLM output not JSON; returning fallback. RAW: %r", out_text)
         fallback = {
             "summary": "invalid",
             "grounding_score": 0.0,
             "unsupported_sentences": [],
             "suggested_draft": ""
         }
-        logger.warning("format_report_tool: LLM output not JSON; returning fallback.")
         return json.dumps(fallback, ensure_ascii=False)
 
-    return Tool(name=name, description="Format fact-check JSON into editor report.", func=_tool)
-
+    return Tool(
+        name=name,
+        func=_tool,
+        description="Format fact-check JSON into editor report. Input: JSON or draft string. Output: JSON string.",
+        return_direct=True
+    )
 
 def default_tools(vectordb, embed, bm25=None, tokenized_docs=None, llm=None):
     return [

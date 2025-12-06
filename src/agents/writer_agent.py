@@ -16,8 +16,6 @@ if not logger.handlers:
 
 
 class WriterAgent:
-    """Deterministic writer that calls the outline + writer tools directly (no AgentExecutor)."""
-
     def __init__(self, llm: Any = None, model_name: str = "gpt-4o", verbose: bool = False):
         if llm is None:
             try:
@@ -26,7 +24,6 @@ class WriterAgent:
                 llm = OpenAI(api_key=settings.OPENAI_API_KEY)
         self.llm = llm
         self.verbose = verbose
-        # create tools (their .func expects either dict or JSON string)
         self._outline_tool = create_outline_tool_factory(self.llm)
         self._write_tool = write_draft_tool_factory(self.llm)
 

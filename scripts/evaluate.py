@@ -60,7 +60,3 @@ def evaluate_and_persist(fact_check, run_meta, out_dir = "./eval_out"):
     metrics = compute_run_metrics(fact_check)
     persist_run_csv(out_dir, run_meta, metrics, fact_check)
     return metrics
-
-# Example usage:
-# metrics = evaluate_and_persist(fc_result, {"run_id":"r1","brief":"Triphala article","timestamp":time.time()})
-# print(metrics)

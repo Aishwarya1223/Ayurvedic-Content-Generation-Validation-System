@@ -34,8 +34,6 @@ class OutlineAgent:
         except Exception as e:
             logger.exception("outline tool failed: %s", e)
             resp = self.tool.func(payload)
-
-        # tool is expected to return a dict; if it's a JSON string, try parsing.
         if isinstance(resp, str):
             try:
                 parsed = json.loads(resp)
